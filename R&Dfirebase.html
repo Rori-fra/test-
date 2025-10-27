@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Système R&D Multi-joueur — Firebase</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background:#205c2d; color:#fff; padding:20px; }
+    .tier-item{margin-bottom:10px;}
+    .tier-locked{opacity:.5; pointer-events:none;}
+    .tier-completed{background:#4339d6;color:#000;}
+    .progress-bar{height:20px;}
+    .toast-container{position:fixed; right:1rem; bottom:1rem; z-index:9999;}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="text-center mb-4">Système R&D — Multi-joueur (Firebase)</h1>
+
+    <div id="login-card" class="card mb-3">
+      <div class="card-body d-flex gap-2 align-items-center flex-wrap">
+        <input id="pseudo-input" class="form-control w-auto" placeholder="Votre pseudo Minecraft">
+        <button id="btn-login" class="btn btn-primary">Connexion</button>
+        <button id="btn-logout" class="btn btn-secondary" style="display:none;">Déconnexion</button>
+        <div id="connected-info" style="margin-left:auto;"></div>
+      </div>
+    </div>
+
+    <ul class="nav nav-tabs" id="categoryTabs">
+      <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#general">Général</button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#resources">Ressources</button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#industry">Industrie</button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#military">Militaire</button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tech">Technologie</button></li>
+    </ul>
+
+    <div class="tab-content mt-3" id="categories-container"></div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- SDK Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    /* -------------------------------
+       CONFIG FIREBASE (à remplacer)
+    --------------------------------*/
+    const firebaseConfig = {
+      apiKey: "AIzaSyDXCHBw68fxbk2Ng__cl5irek2C-ivQ26w",
+  authDomain: "mc-rd-5b4b5.firebaseapp.com",
+  projectId: "mc-rd-5b4b5",
+  storageBucket: "mc-rd-5b4b5.firebasestorage.app",
+  messagingSenderId: "807487281433",
+  appId: "1:807487281433:web:8de9092d85ac8a414b4d88",
+  measurementId: "G-F13BGK4218"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    /* -------------------------------
+       DONNÉES DES CATÉGORIES
+    --------------------------------*/
+    const categories = {
+      general: { name:'Général', tiers:16, objectives:[
+        'Obtenir 1 bûche de bois','Fabriquer 10 planches de bois','Craft une pioche en bois',
+        'Miner 10 blocs de pierre','Craft une pioche en pierre','Obtenir 2 pioches en diamant',
+        'Construire un lit','Obtenir 64 pains','Tuer un zombie','Explorer 1000 blocs du spawn',
+        'Obtenir 10 pioches en diamant','Construire une maison en pierre','Obtenir un enchantement niveau 1',
+        'Tuer un squelette avec un arc','Obtenir 5 balises','Atteindre le Nether'
+      ]},
+      resources: { name:'Ressources', tiers:12, objectives:[
+        'Miner 10 charbons','Obtenir 5 minerais de fer','Fabriquer 10 lingots de fer','Miner 5 diamants',
+        'Obtenir 20 quartz du Nether','Collecter 64 sables','Fabriquer 32 verres',
+        'Obtenir 10 émeraudes par commerce','Miner 50 redstones','Collecter 16 lapis-lazulis',
+        'Obtenir 5 obsidiennes','Collecter 64 terres'
+      ]},
+      industry: { name:'Industrie', tiers:13, objectives:[
+        'Craft un four','Cuire 10 minerais','Fabriquer une table de craft','Craft 10 outils en fer',
+        'Fabriquer une enclume','Réparer un outil','Craft un distributeur','Fabriquer un piston',
+        'Construire un circuit redstone simple','Fabriquer 5 trappes','Craft un hopper',
+        'Construire un ascenseur basique','Fabriquer une machine à canon (TNT)'
+      ]},
+      military: { name:'Militaire', tiers:14, objectives:[
+        'Craft un bouclier','Obtenir 5 armures en cuir','Tuer 10 mobs hostiles','Craft une épée en fer',
+        'Obtenir une armure en fer complète','Tuer un creeper','Fabriquer 20 flèches','Tuer un enderman',
+        'Obtenir une armure en diamant','Construire un piège à mobs','Tuer un boss (Wither)',
+        'Fabriquer des potions de force','Obtenir une épée en netherite','Défendre un village contre un raid'
+      ]},
+      tech: { name:'Technologie', tiers:8, objectives:[
+        "Obtenir une table d'enchantement","Enchanter un outil niveau 5","Fabriquer un livre de sorts",
+        "Construire un portail Nether","Obtenir des perles de l'Ender","Activer l'End",
+        "Tuer l'Ender Dragon","Obtenir du netherite"
+      ]}
+    };
+
+    let currentPseudo = null;
+    let currentProgress = {};
+
+    /* -------------------------------
+       UTILITAIRES UI
+    --------------------------------*/
+    function showToast(msg,type='info'){
+      const c=document.getElementById('toastContainer');
+      const t=document.createElement('div');
+      t.className=`toast align-items-center text-bg-${type} border-0 show mb-2`;
+      t.innerHTML=`<div class="d-flex"><div class="toast-body">${msg}</div><button class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+      c.appendChild(t);
+      setTimeout(()=>t.remove(),4000);
+    }
+
+    /* -------------------------------
+       FIREBASE: Lecture / Écriture
+    --------------------------------*/
+    async function loadPlayerData(pseudo){
+      const snap = await db.ref('players/'+pseudo).get();
+      if (snap.exists()) {
+        return snap.val();
+      } else {
+        const empty = {};
+        Object.keys(categories).forEach(k => empty[k] = []);
+        await db.ref('players/'+pseudo).set(empty);
+        return empty;
+      }
+    }
+
+    async function savePlayerData(pseudo,data){
+      await db.ref('players/'+pseudo).set(data);
+    }
+
+    /* -------------------------------
+       LOGIN / LOGOUT
+    --------------------------------*/
+    document.getElementById('btn-login').onclick = async ()=>{
+      const pseudo = document.getElementById('pseudo-input').value.trim();
+      if(!pseudo) return showToast('Entre ton pseudo','warning');
+      currentPseudo = pseudo;
+      currentProgress = await loadPlayerData(pseudo);
+      updateLoginUI();
+      renderAllCategories();
+      showToast(`Connecté en tant que ${pseudo}`,'success');
+    };
+
+    document.getElementById('btn-logout').onclick = ()=>{
+      currentPseudo=null;
+      currentProgress={};
+      updateLoginUI();
+      renderAllCategories();
+      showToast('Déconnecté','secondary');
+    };
+
+    function updateLoginUI(){
+      const connected = document.getElementById('connected-info');
+      const loginBtn = document.getElementById('btn-login');
+      const logoutBtn = document.getElementById('btn-logout');
+      const pseudoInput = document.getElementById('pseudo-input');
+      if(currentPseudo){
+        connected.textContent=`Connecté : ${currentPseudo}`;
+        loginBtn.style.display='none';
+        logoutBtn.style.display='inline-block';
+        pseudoInput.style.display='none';
+      }else{
+        connected.textContent='';
+        loginBtn.style.display='inline-block';
+        logoutBtn.style.display='none';
+        pseudoInput.style.display='inline-block';
+      }
+    }
+
+    /* -------------------------------
+       RENDU DES CATÉGORIES
+    --------------------------------*/
+    function renderAllCategories(){
+      const container = document.getElementById('categories-container');
+      container.innerHTML='';
+      Object.keys(categories).forEach((key,idx)=>{
+        const cat=categories[key];
+        const prog=currentProgress[key]||[];
+        const completed=prog.filter(Boolean).length;
+        const percent=Math.round((completed/cat.tiers)*100);
+        const pane=document.createElement('div');
+        pane.className=`tab-pane fade ${idx===0?'show active':''}`;
+        pane.id=key;
+        pane.innerHTML=`
+          <h2>${cat.name}</h2>
+          <div id="${key}-tiers"></div>
+          <div class="progress mt-3"><div id="${key}-progress" class="progress-bar bg-success" style="width:${percent}%"></div></div>`;
+        container.appendChild(pane);
+        renderCategory(key);
+      });
+    }
+
+    function renderCategory(key){
+      const cat=categories[key];
+      const cont=document.getElementById(`${key}-tiers`);
+      const prog=currentProgress[key]||[];
+      const bar=document.getElementById(`${key}-progress`);
+      let html='';
+      let completed=0;
+      for(let i=0;i<cat.tiers;i++){
+        const done=prog[i];
+        const locked=!done && i>0 && !prog[i-1];
+        completed+=done?1:0;
+        const cls=done?'tier-completed':(locked?'tier-locked':'');
+        const dis=(locked||!currentPseudo)?'disabled':'';
+        html+=`
+          <div class="tier-item card ${cls}">
+            <div class="card-body">
+              <h5>Palier ${i+1}</h5>
+              <p>${cat.objectives[i]||'Objectif bonus'}</p>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="${key}-tier-${i}" ${done?'checked':''} ${dis}
+                  onchange="toggleTier('${key}',${i})">
+                <label class="form-check-label">Validé</label>
+              </div>
+            </div>
+          </div>`;
+      }
+      cont.innerHTML=html;
+      bar.style.width=(completed/cat.tiers*100)+'%';
+    }
+
+    /* -------------------------------
+       Validation d’un palier
+    --------------------------------*/
+    async function toggleTier(categoryKey, tierIndex){
+      if(!currentPseudo) return showToast('Connecte-toi pour valider','warning');
+      const prog=currentProgress[categoryKey]||[];
+      const cb=document.getElementById(`${categoryKey}-tier-${tierIndex}`);
+      if(cb.checked && tierIndex>0 && !prog[tierIndex-1]){
+        cb.checked=false;
+        return showToast('Valide le palier précédent d’abord','danger');
+      }
+      prog[tierIndex]=cb.checked;
+      currentProgress[categoryKey]=prog;
+      await savePlayerData(currentPseudo,currentProgress);
+      renderCategory(categoryKey);
+      showToast(cb.checked?'Palier validé ✅':'Palier annulé ❌',cb.checked?'success':'secondary');
+    }
+
+    /* -------------------------------
+       INIT
+    --------------------------------*/
+    (function(){
+      renderAllCategories();
+      window.toggleTier=toggleTier;
+    })();
+  </script>
+</body>
+</html>
